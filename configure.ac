@@ -94,6 +94,22 @@ AC_CHECK_HEADERS(fcntl.h sys/time.h unistd.h sys/mman.h)
 AC_CHECK_HEADERS(ctype.h errno.h sys/resource.h)
 AC_CHECK_HEADERS(endian.h sys/endian.h arpa/inet.h)
 AC_CHECK_HEADERS(alloca.h pthread.h)
+AC_CHECK_HEADERS(termios.h sys/statvfs.h)
+
+# Native Windows (MinGW-w64) lacks a number of POSIX interfaces. Rather than
+# conditionalising every call site, win32/compat.c supplies them and
+# win32/compat.h is pulled in from lrzip_private.h.
+case $host_os in
+	mingw*|msys*)
+		WIN32_BUILD=yes
+		# BCryptGenRandom() provides the /dev/urandom equivalent.
+		LIBS="$LIBS -lbcrypt"
+		;;
+	*)
+		WIN32_BUILD=no
+		;;
+esac
+AM_CONDITIONAL([WIN32_COMPAT], [test x"$WIN32_BUILD" = x"yes"])
 
 AC_TYPE_OFF_T
 AC_TYPE_SIZE_T

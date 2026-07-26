@@ -58,6 +58,13 @@ libtmplrzip_la_SOURCES = \
   libzpaq/libzpaq.h \
   libzpaq/zpaq_lrzip.cpp
 
+# POSIX compatibility shims, native Windows only.
+if WIN32_COMPAT
+libtmplrzip_la_SOURCES += \
+  win32/compat.c \
+  win32/compat.h
+endif
+
 libtmplrzip_la_LIBADD = lzma/C/liblzma.la
 
 

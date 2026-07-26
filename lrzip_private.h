@@ -40,7 +40,13 @@
 # error "lrzip requires a 64-bit architecture"
 #endif
 _Static_assert(sizeof(void *) >= 8, "lrzip requires a 64-bit architecture");
-_Static_assert(sizeof(long) >= 8, "lrzip requires a 64-bit architecture");
+/* Note: deliberately no assertion on sizeof(long). LLP64 targets such as
+ * 64-bit Windows have a 32-bit long while being fully 64-bit; lrzip uses
+ * i64/int64_t for all wide values, so long's width is irrelevant. */
+
+#ifdef _WIN32
+# include "win32/compat.h"
+#endif
 
 #ifdef HAVE_PTHREAD_H
 # include <pthread.h>
@@ -56,6 +62,8 @@ _Static_assert(sizeof(long) >= 8, "lrzip requires a 64-bit architecture");
 
 #ifdef HAVE_ALLOCA_H
 # include <alloca.h>
+#elif defined alloca
+/* Already provided as a macro, e.g. by <malloc.h> on MinGW. */
 #elif defined __GNUC__
 # define alloca __builtin_alloca
 #elif defined _AIX
