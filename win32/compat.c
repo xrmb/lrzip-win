@@ -596,8 +596,9 @@ int mkstemp(char *tmpl)
 		for (i = 0; i < 6; i++)
 			suffix[i] = letters[(unsigned long)random() % (sizeof letters - 1)];
 
-		fd = _open(tmpl, _O_RDWR | _O_CREAT | _O_EXCL | _O_BINARY,
-			   _S_IREAD | _S_IWRITE);
+		/* Deliberately via lrzip_win32_open() so the temporary file is
+		 * opened with delete sharing and can be unlinked while open. */
+		fd = lrzip_win32_open(tmpl, _O_RDWR | _O_CREAT | _O_EXCL | _O_BINARY);
 		if (fd >= 0)
 			return fd;
 		if (errno != EEXIST)
@@ -791,6 +792,82 @@ ssize_t lrzip_win32_write(int fd, const void *buf, size_t count)
 	if (count > LRZIP_IO_MAX)
 		count = LRZIP_IO_MAX;
 	return _write(fd, buf, (unsigned int)count);
+}
+
+/* ================================================================== *
+ * open() with POSIX unlink semantics
+ * ================================================================== */
+
+int lrzip_win32_open(const char *path, int flags, ...)
+{
+	DWORD access = 0, disposition, attrs = FILE_ATTRIBUTE_NORMAL;
+	const DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+	int osf_flags = 0;
+	HANDLE h;
+	int fd;
+
+	switch (flags & (_O_RDONLY | _O_WRONLY | _O_RDWR)) {
+	case _O_WRONLY:
+		access = GENERIC_WRITE;
+		break;
+	case _O_RDWR:
+		access = GENERIC_READ | GENERIC_WRITE;
+		break;
+	default:
+		access = GENERIC_READ;
+		osf_flags |= _O_RDONLY;
+		break;
+	}
+	if (flags & _O_APPEND) {
+		access |= FILE_APPEND_DATA;
+		osf_flags |= _O_APPEND;
+	}
+
+	/* DELETE access lets the file be renamed or marked for deletion while
+	 * still open; combined with FILE_SHARE_DELETE this is what gives POSIX
+	 * unlink-while-open behaviour. */
+	access |= DELETE;
+
+	if ((flags & _O_CREAT) && (flags & _O_EXCL))
+		disposition = CREATE_NEW;
+	else if ((flags & _O_CREAT) && (flags & _O_TRUNC))
+		disposition = CREATE_ALWAYS;
+	else if (flags & _O_CREAT)
+		disposition = OPEN_ALWAYS;
+	else if (flags & _O_TRUNC)
+		disposition = TRUNCATE_EXISTING;
+	else
+		disposition = OPEN_EXISTING;
+
+	if (flags & _O_TEMPORARY)
+		attrs |= FILE_FLAG_DELETE_ON_CLOSE;
+
+	h = CreateFileA(path, access, share, NULL, disposition, attrs, NULL);
+	if (h == INVALID_HANDLE_VALUE) {
+		switch (GetLastError()) {
+		case ERROR_FILE_EXISTS:
+		case ERROR_ALREADY_EXISTS:	errno = EEXIST; break;
+		case ERROR_FILE_NOT_FOUND:
+		case ERROR_PATH_NOT_FOUND:	errno = ENOENT; break;
+		case ERROR_ACCESS_DENIED:	errno = EACCES; break;
+		case ERROR_SHARING_VIOLATION:	errno = EACCES; break;
+		default:			errno = EINVAL; break;
+		}
+		return -1;
+	}
+
+	/* Text/binary follows the process default set by
+	 * win32_init_binary_mode() unless _O_TEXT was asked for explicitly. */
+	if (flags & _O_TEXT)
+		osf_flags |= _O_TEXT;
+
+	fd = _open_osfhandle((intptr_t)h, osf_flags);
+	if (fd < 0) {
+		CloseHandle(h);
+		errno = EMFILE;
+		return -1;
+	}
+	return fd;
 }
 
 /* ================================================================== *

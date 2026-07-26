@@ -170,9 +170,23 @@ void srandom(unsigned int seed);
 ssize_t lrzip_win32_read(int fd, void *buf, size_t count);
 ssize_t lrzip_win32_write(int fd, const void *buf, size_t count);
 
+/* ------------------------------------------------------------------ *
+ * open() with POSIX unlink semantics.
+ *
+ * Windows only refuses to delete an open file because MSVCRT's _open() omits
+ * FILE_SHARE_DELETE from the share mode. Opening via CreateFile() with
+ * delete sharing - and DELETE access - makes unlink() on an open file behave
+ * exactly as it does on POSIX: the name goes away immediately and the data
+ * is released when the last handle closes.
+ *
+ * lrzip relies on that idiom for its temporary files.
+ * ------------------------------------------------------------------ */
+int lrzip_win32_open(const char *path, int flags, ...);
+
 #ifndef __cplusplus
 # define read(fd, buf, count)	lrzip_win32_read((fd), (buf), (count))
 # define write(fd, buf, count)	lrzip_win32_write((fd), (buf), (count))
+# define open			lrzip_win32_open
 #endif
 
 /* ------------------------------------------------------------------ *
