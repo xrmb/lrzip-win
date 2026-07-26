@@ -50,10 +50,12 @@
 #define MAX_MAPPINGS 64
 
 struct map_entry {
-	void	*ptr;	/* pointer handed back to the caller */
-	void	*base;	/* real view / allocation base */
-	size_t	 len;	/* usable length from ptr */
-	int	 anon;	/* 1 = VirtualAlloc, 0 = MapViewOfFile */
+	void	*ptr;		/* pointer handed back to the caller */
+	void	*base;		/* real view / allocation base */
+	size_t	 len;		/* usable length from ptr */
+	int	 anon;		/* 1 = VirtualAlloc, 0 = MapViewOfFile */
+	int	 lazy;		/* anonymous range reserved but not committed */
+	DWORD	 prot;		/* page protection, for deferred commits */
 	int	 used;
 };
 
@@ -79,7 +81,7 @@ static void mappings_unlock(void)
 	LeaveCriticalSection(&mappings_cs);
 }
 
-static int mapping_add(void *ptr, void *base, size_t len, int anon)
+static int mapping_add(void *ptr, void *base, size_t len, int anon, int lazy, DWORD prot)
 {
 	int i;
 
@@ -90,6 +92,8 @@ static int mapping_add(void *ptr, void *base, size_t len, int anon)
 			mappings[i].base = base;
 			mappings[i].len  = len;
 			mappings[i].anon = anon;
+			mappings[i].lazy = lazy;
+			mappings[i].prot = prot;
 			mappings[i].used = 1;
 			mappings_unlock();
 			return 0;
@@ -167,12 +171,19 @@ void *mmap(void *addr, size_t len, int prot, int flags, int fd, int64_t offset)
 		else
 			page_prot = PAGE_NOACCESS;
 
-		ret = VirtualAlloc(NULL, len, MEM_RESERVE | MEM_COMMIT, page_prot);
+		/* Reserve the address space but do not charge it against the
+		 * system commit limit yet. Linux anonymous mappings are lazy
+		 * under overcommit, and lrzip leans on that: it sizes the
+		 * STDIN buffer to the whole compression window, which is tens
+		 * of gigabytes on a large-memory machine, and then usually
+		 * reads far less into it. Pages are committed on demand by
+		 * lrzip_win32_read(). */
+		ret = VirtualAlloc(NULL, len, MEM_RESERVE, page_prot);
 		if (!ret) {
 			errno = ENOMEM;
 			return MAP_FAILED;
 		}
-		if (mapping_add(ret, ret, len, 1)) {
+		if (mapping_add(ret, ret, len, 1, 1, page_prot)) {
 			VirtualFree(ret, 0, MEM_RELEASE);
 			errno = ENOMEM;
 			return MAP_FAILED;
@@ -244,7 +255,7 @@ void *mmap(void *addr, size_t len, int prot, int flags, int fd, int64_t offset)
 	}
 
 	ret = (char *)view + delta;
-	if (mapping_add(ret, view, len, 0)) {
+	if (mapping_add(ret, view, len, 0, 0, page_prot)) {
 		UnmapViewOfFile(view);
 		errno = ENOMEM;
 		return MAP_FAILED;
@@ -777,13 +788,53 @@ long random(void)
  * Bounded read()/write()
  * ================================================================== */
 
-/* Matches the Linux cap so callers see an ordinary short transfer. */
-#define LRZIP_IO_MAX 0x7ffff000u
+/* Upper bound on a single transfer.
+ *
+ * MSVCRT cannot exceed INT_MAX at all, and Linux silently caps at 0x7ffff000,
+ * so any value below that is legal - callers must already cope with short
+ * transfers and every loop in lrzip does. A modest cap is chosen deliberately:
+ * read() commits the span it is about to fill in a lazily reserved mapping, so
+ * this also bounds how much commit charge a small STDIN stream pulls in.
+ */
+#define LRZIP_IO_MAX (64u * 1024u * 1024u)
+
+/* Back a span of a lazily reserved anonymous mapping with real pages.
+ *
+ * Anonymous mappings are handed out reserved-only (see mmap above), so the
+ * region a read() is about to fill has to be committed first. Doing it here
+ * rather than up front means a small STDIN stream costs a small commit
+ * charge instead of the whole multi-gigabyte compression window, while the
+ * window itself stays at full size - shrinking it would directly cost
+ * compression ratio, since rzip can only match within one window.
+ *
+ * Anything not inside a lazily reserved mapping is left alone.
+ */
+static void commit_if_lazy(void *addr, size_t len)
+{
+	struct map_entry *e;
+
+	if (!addr || !len)
+		return;
+
+	mappings_lock();
+	e = mapping_containing(addr);
+	if (e && e->anon && e->lazy) {
+		size_t avail = (size_t)((char *)e->ptr + e->len - (char *)addr);
+
+		if (len > avail)
+			len = avail;
+		/* VirtualAlloc rounds to page boundaries and committing an
+		 * already-committed page is a no-op, so this is idempotent. */
+		VirtualAlloc(addr, len, MEM_COMMIT, e->prot);
+	}
+	mappings_unlock();
+}
 
 ssize_t lrzip_win32_read(int fd, void *buf, size_t count)
 {
 	if (count > LRZIP_IO_MAX)
 		count = LRZIP_IO_MAX;
+	commit_if_lazy(buf, count);
 	return _read(fd, buf, (unsigned int)count);
 }
 
