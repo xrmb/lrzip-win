@@ -1,0 +1,99 @@
+name: ci
+
+# The Windows job is the point of this fork: it builds a standalone static
+# binary and runs the full round-trip suite. The Linux job exists to prove the
+# port has not disturbed the POSIX build, which is what keeps the portable
+# fixes upstreamable.
+
+on:
+  push:
+    branches:
+      - master
+      - 'windows/**'
+      - 'fix/**'
+      - 'integration/**'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    name: windows / ucrt64 (static)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # configure.ac derives the version from git; a shallow clone breaks it.
+          fetch-depth: 0
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            autoconf
+            automake
+            libtool
+            make
+            diffutils
+            findutils
+            gawk
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-lz4
+            mingw-w64-ucrt-x86_64-lzo2
+            mingw-w64-ucrt-x86_64-bzip2
+            mingw-w64-ucrt-x86_64-zlib
+
+      - name: configure
+        run: ./autogen.sh --enable-static-bin
+
+      - name: build
+        run: make -j"$(nproc)"
+
+      - name: confirm the binary is standalone
+        run: |
+          set -eu
+          # Anything outside the system set would have to ship alongside the exe.
+          bad=$(objdump -p lrzip.exe \
+                | awk '/DLL Name:/ { print tolower($3) }' \
+                | grep -viE '^(kernel32|advapi32|bcrypt|user32|ws2_32|api-ms-win-crt-.*)\.dll$' || true)
+          if [ -n "$bad" ]; then
+            echo "unexpected runtime dependencies:"; echo "$bad"; exit 1
+          fi
+          echo "only system DLLs are imported"
+          objdump -p lrzip.exe | awk '/DLL Name:/ { print "  " $3 }'
+
+      - name: round-trip tests
+        run: ./test/roundtrip.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lrzip-win-x64
+          path: lrzip.exe
+          if-no-files-found: error
+
+  linux:
+    name: linux / gcc
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y liblzo2-dev liblz4-dev libbz2-dev zlib1g-dev
+
+      - name: configure
+        run: ./autogen.sh
+
+      - name: build
+        run: make -j"$(nproc)"
+
+      - name: round-trip tests
+        run: ./test/roundtrip.sh
