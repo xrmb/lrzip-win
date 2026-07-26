@@ -26,17 +26,25 @@
 # include <sys/stat.h>
 #endif
 #include <fcntl.h>
-#include <sys/statvfs.h>
+#ifdef HAVE_SYS_STATVFS_H
+# include <sys/statvfs.h>
+#endif
 #ifdef HAVE_UNISTD_H
 # include <unistd.h>
 #endif
-#include <arpa/inet.h>
+#ifdef HAVE_ARPA_INET_H
+# include <arpa/inet.h>
+#endif
 #ifdef HAVE_ERRNO_H
 #include <errno.h>
 #endif
-#include <sys/mman.h>
+#ifdef HAVE_SYS_MMAN_H
+# include <sys/mman.h>
+#endif
 #include <sys/time.h>
-#include <termios.h>
+#ifdef HAVE_TERMIOS_H
+# include <termios.h>
+#endif
 #ifdef HAVE_ENDIAN_H
 # include <endian.h>
 #elif HAVE_SYS_ENDIAN_H

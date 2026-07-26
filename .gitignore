@@ -37,3 +37,6 @@ regressiontest.out
 decompress_demo
 liblrzip_demo
 
+
+# Native Windows build artefacts
+*.exe

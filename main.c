@@ -39,7 +39,9 @@
 # include <sys/stat.h>
 #endif
 
-#include <termios.h>
+#ifdef HAVE_TERMIOS_H
+# include <termios.h>
+#endif
 #ifdef HAVE_ENDIAN_H
 # include <endian.h>
 #elif HAVE_SYS_ENDIAN_H
@@ -327,6 +329,12 @@ int main(int argc, char *argv[])
 	double seconds,total_time; // for timers
 	bool nice_set = false, threads_set = false, filter_set = false;
 	int c, i;
+
+#ifdef _WIN32
+	/* Must happen before any file or stream I/O: the CRT defaults to text
+	 * mode, which corrupts compressed data. */
+	win32_init_binary_mode();
+#endif
 	int hours,minutes;
 	extern int optind;
 	char *eptr, *av; /* for environment */

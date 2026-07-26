@@ -39,7 +39,9 @@
 #ifdef HAVE_UNISTD_H
 # include <unistd.h>
 #endif
-#include <termios.h>
+#ifdef HAVE_TERMIOS_H
+# include <termios.h>
+#endif
 
 #ifdef _SC_PAGE_SIZE
 # define PAGE_SIZE (sysconf(_SC_PAGE_SIZE))
@@ -49,7 +51,9 @@
 
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <sys/mman.h>
+#ifdef HAVE_SYS_MMAN_H
+# include <sys/mman.h>
+#endif
 #include <fcntl.h>
 #include "lrzip_private.h"
 #include "util.h"
@@ -191,6 +195,12 @@ size_t round_up_page(rzip_control *control, size_t len)
 
 bool get_rand(rzip_control *control, uchar *buf, int len)
 {
+#ifdef _WIN32
+	/* Fail closed: weak PRNG fallback is unsafe for salts/IVs. */
+	if (unlikely(win32_secure_random(buf, (size_t)len)))
+		fatal_return(("Failed to obtain system entropy in get_rand\n"), false);
+	return true;
+#else
 	int fd;
 
 	/* Fail closed: weak PRNG fallback is unsafe for salts/IVs. */
@@ -204,6 +214,7 @@ bool get_rand(rzip_control *control, uchar *buf, int len)
 	if (unlikely(close(fd)))
 		fatal_return(("Failed to close fd in get_rand\n"), false);
 	return true;
+#endif
 }
 
 bool read_config(rzip_control *control)
