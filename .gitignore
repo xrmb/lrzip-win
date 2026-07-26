@@ -40,3 +40,4 @@ liblrzip_demo
 
 # Native Windows build artefacts
 *.exe
+.dirstamp
